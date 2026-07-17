@@ -42,6 +42,14 @@ Parameters:
     Description: FastAPI container port
     Default: 81
 
+  FMDomainName:
+    Type: String
+    Description: Custom domain for the FM frontend (e.g. fm.station.knackforge.com)
+
+  CMDomainName:
+    Type: String
+    Description: Custom domain for the Custom App (CM) frontend (e.g. cm.station.knackforge.com)
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -68,6 +76,11 @@ Metadata:
           - DesiredTaskCount
           - DjangoContainerPort
           - FastAPIContainerPort
+      - Label:
+          default: "Frontend Domains"
+        Parameters:
+          - FMDomainName
+          - CMDomainName
 
 Resources:
   # ============================================================================
@@ -165,6 +178,8 @@ Resources:
         Environment: !Ref Environment
         ProjectName: !Ref ProjectName
         SSLCertificateID: !Ref SSLCertificateID
+        FMDomainName: !Ref FMDomainName
+        CMDomainName: !Ref CMDomainName
       Tags:
         - Key: Environment
           Value: !Ref Environment

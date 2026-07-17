@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: S3 buckets for Station Dev - deployment artifacts and static assets
+Description: S3 buckets for Station Dev - FM and Custom App frontend static assets
 Parameters:
   ProjectName:
     Type: String
@@ -11,11 +11,11 @@ Parameters:
     Default: dev
 
 Resources:
-  # S3 bucket for Django
-  DjangoBucket:
+  # S3 bucket for FM frontend
+  FMBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}"
+      BucketName: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -28,17 +28,17 @@ Resources:
         RestrictPublicBuckets: true
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-${Environment}-django"
+          Value: !Sub "${ProjectName}-${Environment}-fm"
         - Key: Environment
           Value: !Ref Environment
         - Key: Service
-          Value: django
+          Value: fm
 
-  # S3 bucket for FastAPI
-  FastAPIBucket:
+  # S3 bucket for Custom App (cm) frontend
+  CMBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}"
+      BucketName: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -51,33 +51,25 @@ Resources:
         RestrictPublicBuckets: true
       Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-${Environment}-fastapi"
+          Value: !Sub "${ProjectName}-${Environment}-cm"
         - Key: Environment
           Value: !Ref Environment
         - Key: Service
-          Value: fastapi
+          Value: cm
 
 Outputs:
-  DjangoBucketName:
-    Description: Django S3 bucket name
-    Value: !Ref DjangoBucket
-    Export:
-      Name: !Sub "${ProjectName}-${Environment}-django-bucket"
+  FMBucketName:
+    Description: FM frontend S3 bucket name
+    Value: !Ref FMBucket
 
-  DjangoBucketArn:
-    Description: Django S3 bucket ARN
-    Value: !GetAtt DjangoBucket.Arn
-    Export:
-      Name: !Sub "${ProjectName}-${Environment}-django-bucket-arn"
+  FMBucketArn:
+    Description: FM frontend S3 bucket ARN
+    Value: !GetAtt FMBucket.Arn
 
-  FastAPIBucketName:
-    Description: FastAPI S3 bucket name
-    Value: !Ref FastAPIBucket
-    Export:
-      Name: !Sub "${ProjectName}-${Environment}-fastapi-bucket"
+  CMBucketName:
+    Description: Custom App (CM) frontend S3 bucket name
+    Value: !Ref CMBucket
 
-  FastAPIBucketArn:
-    Description: FastAPI S3 bucket ARN
-    Value: !GetAtt FastAPIBucket.Arn
-    Export:
-      Name: !Sub "${ProjectName}-${Environment}-fastapi-bucket-arn"
+  CMBucketArn:
+    Description: Custom App (CM) frontend S3 bucket ARN
+    Value: !GetAtt CMBucket.Arn

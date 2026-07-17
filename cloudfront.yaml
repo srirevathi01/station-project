@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFront distributions for Station Dev Django and FastAPI buckets
+Description: CloudFront distributions for Station Dev FM and Custom App (CM) frontends
 
 Parameters:
   Environment:
@@ -9,45 +9,57 @@ Parameters:
     Type: String
   SSLCertificateID:
     Type: String
+  FMDomainName:
+    Type: String
+    Description: Custom domain for the FM frontend (e.g. fm.station.knackforge.com)
+  CMDomainName:
+    Type: String
+    Description: Custom domain for the Custom App (CM) frontend (e.g. cm.station.knackforge.com)
 
 Resources:
-  DjangoOAC:
+  # ---- FM frontend ----
+  FMOAC:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub "${ProjectName}-${Environment}-django-oac"
+        Name: !Sub "${ProjectName}-${Environment}-fm-oac"
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  FastAPIOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${ProjectName}-${Environment}-fastapi-oac"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  DjangoDistribution:
+  FMDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
-        Comment: !Sub "${ProjectName}-${Environment} Django CDN"
+        Comment: !Sub "${ProjectName}-${Environment} FM frontend"
         Enabled: true
+        DefaultRootObject: index.html
         PriceClass: PriceClass_All
         HttpVersion: http2
         IPV6Enabled: true
+        Aliases:
+          - !Ref FMDomainName
         Origins:
-          - Id: DjangoS3Origin
-            DomainName: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+          - Id: FMS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
             S3OriginConfig:
               OriginAccessIdentity: ''
-            OriginAccessControlId: !GetAtt DjangoOAC.Id
+            OriginAccessControlId: !GetAtt FMOAC.Id
         DefaultCacheBehavior:
-          TargetOriginId: DjangoS3Origin
+          TargetOriginId: FMS3Origin
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        # React SPA: serve index.html for all 403/404s
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
         ViewerCertificate:
           AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
           MinimumProtocolVersion: TLSv1.2_2021
@@ -56,25 +68,66 @@ Resources:
           GeoRestriction:
             RestrictionType: none
 
-  FastAPIDistribution:
+  FMBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadFM
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-fm-${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FMDistribution}"
+
+  # ---- Custom App (CM) frontend ----
+  CMOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${Environment}-cm-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CMDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
-        Comment: !Sub "${ProjectName}-${Environment} FastAPI CDN"
+        Comment: !Sub "${ProjectName}-${Environment} Custom App (CM) frontend"
         Enabled: true
+        DefaultRootObject: index.html
         PriceClass: PriceClass_All
         HttpVersion: http2
         IPV6Enabled: true
+        Aliases:
+          - !Ref CMDomainName
         Origins:
-          - Id: FastAPIS3Origin
-            DomainName: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+          - Id: CMS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
             S3OriginConfig:
               OriginAccessIdentity: ''
-            OriginAccessControlId: !GetAtt FastAPIOAC.Id
+            OriginAccessControlId: !GetAtt CMOAC.Id
         DefaultCacheBehavior:
-          TargetOriginId: FastAPIS3Origin
+          TargetOriginId: CMS3Origin
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        # React SPA: serve index.html for all 403/404s
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
         ViewerCertificate:
           AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
           MinimumProtocolVersion: TLSv1.2_2021
@@ -83,53 +136,36 @@ Resources:
           GeoRestriction:
             RestrictionType: none
 
-  DjangoBucketPolicyForCloudFront:
+  CMBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}"
+      Bucket: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}"
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: AllowCloudFrontReadDjango
+          - Sid: AllowCloudFrontReadCM
             Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-django-${AWS::AccountId}/*"
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-cm-${AWS::AccountId}/*"
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DjangoDistribution}"
-
-  FastAPIBucketPolicyForCloudFront:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}"
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowCloudFrontReadFastAPI
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-fastapi-${AWS::AccountId}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FastAPIDistribution}"
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CMDistribution}"
 
 Outputs:
-  DjangoCDNDomainName:
-    Description: Django CloudFront domain
-    Value: !GetAtt DjangoDistribution.DomainName
+  FMCDNDomainName:
+    Description: FM frontend CloudFront domain
+    Value: !GetAtt FMDistribution.DomainName
 
-  DjangoCDNId:
-    Description: Django CloudFront distribution ID
-    Value: !Ref DjangoDistribution
+  FMCDNId:
+    Description: FM frontend CloudFront distribution ID
+    Value: !Ref FMDistribution
 
-  FastAPICDNDomainName:
-    Description: FastAPI CloudFront domain
-    Value: !GetAtt FastAPIDistribution.DomainName
+  CMCDNDomainName:
+    Description: Custom App (CM) CloudFront domain
+    Value: !GetAtt CMDistribution.DomainName
 
-  FastAPICDNId:
-    Description: FastAPI CloudFront distribution ID
-    Value: !Ref FastAPIDistribution
+  CMCDNId:
+    Description: Custom App (CM) CloudFront distribution ID
+    Value: !Ref CMDistribution
