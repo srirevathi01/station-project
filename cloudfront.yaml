@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFront distributions for Station Dev Django and FastAPI buckets
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev, stage, prod, etc.)
+  ProjectName:
+    Type: String
+  SSLCertificateID:
+    Type: String
+
+Resources:
+  DjangoOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${Environment}-django-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FastAPIOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${Environment}-fastapi-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  DjangoDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${ProjectName}-${Environment} Django CDN"
+        Enabled: true
+        PriceClass: PriceClass_All
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: DjangoS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt DjangoOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: DjangoS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        ViewerCertificate:
+          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: none
+
+  FastAPIDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${ProjectName}-${Environment} FastAPI CDN"
+        Enabled: true
+        PriceClass: PriceClass_All
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: FastAPIS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt FastAPIOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: FastAPIS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        ViewerCertificate:
+          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: none
+
+  DjangoBucketPolicyForCloudFront:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadDjango
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-django-${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DjangoDistribution}"
+
+  FastAPIBucketPolicyForCloudFront:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadFastAPI
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-fastapi-${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FastAPIDistribution}"
+
+Outputs:
+  DjangoCDNDomainName:
+    Description: Django CloudFront domain
+    Value: !GetAtt DjangoDistribution.DomainName
+
+  DjangoCDNId:
+    Description: Django CloudFront distribution ID
+    Value: !Ref DjangoDistribution
+
+  FastAPICDNDomainName:
+    Description: FastAPI CloudFront domain
+    Value: !GetAtt FastAPIDistribution.DomainName
+
+  FastAPICDNId:
+    Description: FastAPI CloudFront distribution ID
+    Value: !Ref FastAPIDistribution

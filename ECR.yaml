@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates Amazon ECR repositories for Station Dev Backend
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: station
+
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, stage, prod, etc.)
+
+Resources:
+  DjangoRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${Environment}-django"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-django"
+        - Key: Environment
+          Value: !Ref Environment
+
+  FastAPIRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${Environment}-fastapi"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-fastapi"
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  DjangoRepositoryName:
+    Description: Django ECR Repository Name
+    Value: !Ref DjangoRepository
+    Export:
+      Name: !Sub "${AWS::StackName}-DjangoRepository"
+
+  DjangoRepositoryUri:
+    Description: Django ECR Repository URI
+    Value: !GetAtt DjangoRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-DjangoRepositoryUri"
+
+  FastAPIRepositoryName:
+    Description: FastAPI ECR Repository Name
+    Value: !Ref FastAPIRepository
+    Export:
+      Name: !Sub "${AWS::StackName}-FastAPIRepository"
+
+  FastAPIRepositoryUri:
+    Description: FastAPI ECR Repository URI
+    Value: !GetAtt FastAPIRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-FastAPIRepositoryUri"

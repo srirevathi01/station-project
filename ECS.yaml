@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This stack is for creating ECScluster.
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+
+Resources:
+  ECSCluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: !Sub ${ProjectName}-${Environment}
+        CapacityProviders:
+          - FARGATE
+        ClusterSettings:
+          - Name: containerInsights
+            Value: enabled
+        Tags:
+          - Key: environment
+            Value: !Sub ${Environment}
+
+Outputs:
+  ECSCluster:
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ECSCluster

@@ -1,0 +1,412 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root Stack for Station CloudFormation - Orchestrates all nested stacks
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev, stage, prod, etc.)
+    Default: dev
+
+  ProjectName:
+    Type: String
+    Description: Project name for resource naming
+    Default: station
+
+  TemplateBucketName:
+    Type: String
+    Description: S3 bucket containing CloudFormation templates
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+
+  VpcCIDR:
+    Type: String
+    Description: VPC CIDR block
+    Default: 172.29.0.0/16
+
+  SSLCertificateID:
+    Type: String
+    Description: AWS Certificate Manager Certificate ID for HTTPS
+
+  DesiredTaskCount:
+    Type: Number
+    Description: Number of ECS tasks to run
+    Default: 2
+    MinValue: 1
+
+  DjangoContainerPort:
+    Type: Number
+    Description: Django container port
+    Default: 80
+
+  FastAPIContainerPort:
+    Type: Number
+    Description: FastAPI container port
+    Default: 81
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Template Configuration"
+        Parameters:
+          - TemplateBucketName
+      - Label:
+          default: "General Configuration"
+        Parameters:
+          - Environment
+          - ProjectName
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCIDR
+      - Label:
+          default: "Security Configuration"
+        Parameters:
+          - SSLCertificateID
+      - Label:
+          default: "ECS Configuration"
+        Parameters:
+          - DesiredTaskCount
+          - DjangoContainerPort
+          - FastAPIContainerPort
+
+Resources:
+  # ============================================================================
+  # 1. IAM Stack - Creates all roles and permissions
+  # ============================================================================
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/IAM.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 2. VPC Stack - Creates VPC, Subnets, Route Tables, Internet Gateway, NAT
+  # ============================================================================
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/VPC.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        VpcCIDR: !Ref VpcCIDR
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 3. Security Groups Stack - Depends on VPC
+  # ============================================================================
+  SecurityGroupStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/SecurityGroup.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        VPC: !GetAtt VPCStack.Outputs.VPC
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 4. ECR Stack - Creates Docker registries (Independent)
+  # ============================================================================
+  ECRStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/ECR.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 5. S3 Stack - Creates storage buckets (Independent)
+  # ============================================================================
+  S3Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/S3.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 6. CloudFront Stack - Depends on S3
+  # ============================================================================
+  CloudFrontStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: S3Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/cloudfront.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        SSLCertificateID: !Ref SSLCertificateID
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 7. ECS Cluster Stack - Creates cluster (Independent)
+  # ============================================================================
+  ECSClusterStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/ECSCluster.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 8. Target Groups Stack - Depends on VPC
+  # ============================================================================
+  TargetGroupsStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/TargetGroups.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        VPC: !GetAtt VPCStack.Outputs.VPC
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 9. Load Balancer Stack - Depends on SecurityGroup, TargetGroups, VPC
+  # ============================================================================
+  LoadBalancerStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - SecurityGroupStack
+      - TargetGroupsStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/Loadbalancer.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        LoadbalancerSecurityGroup: !GetAtt SecurityGroupStack.Outputs.LoadbalancerSecurityGroup
+        SSLCertificateID: !Ref SSLCertificateID
+        PublicSubnets: !GetAtt VPCStack.Outputs.PublicSubnets
+        TargetGroup1: !GetAtt TargetGroupsStack.Outputs.TargetGroup1
+        TargetGroup2: !GetAtt TargetGroupsStack.Outputs.TargetGroup3
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 10. ECS Task Definition Stack - Depends on IAM
+  # ============================================================================
+  ECSTaskDefinitionStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: IAMStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/ECSTaskDefinition.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        DjangoContainerPort: !Ref DjangoContainerPort
+        FastAPIContainerPort: !Ref FastAPIContainerPort
+        ECSTaskExecutionRoleArn: !GetAtt IAMStack.Outputs.ECSTaskExecutionRoleArn
+        ECSTaskRoleArn: !GetAtt IAMStack.Outputs.ECSTaskRoleArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 11. ECS Service Stack - All dependencies
+  # ============================================================================
+  ECSServiceStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - ECSClusterStack
+      - ECSTaskDefinitionStack
+      - SecurityGroupStack
+      - TargetGroupsStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/ECSService.yaml
+      Parameters:
+        Environment: !Ref Environment
+        ProjectName: !Ref ProjectName
+        DjangoContainerPort: !Ref DjangoContainerPort
+        FastAPIContainerPort: !Ref FastAPIContainerPort
+        DesiredTaskCount: !Ref DesiredTaskCount
+        ECSCluster: !GetAtt ECSClusterStack.Outputs.ECSCluster
+        DjangoTaskDefinitionArn: !GetAtt ECSTaskDefinitionStack.Outputs.DjangoTaskDefinitionArn
+        FastAPITaskDefinitionArn: !GetAtt ECSTaskDefinitionStack.Outputs.FastAPITaskDefinitionArn
+        TargetGroup1: !GetAtt TargetGroupsStack.Outputs.TargetGroup1
+        TargetGroup3: !GetAtt TargetGroupsStack.Outputs.TargetGroup3
+        ECSSecurityGroup: !GetAtt SecurityGroupStack.Outputs.ECSSecurityGroup
+        PrivateSubnets: !GetAtt VPCStack.Outputs.PrivateSubnets
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  # ============================================================================
+  # VPC Outputs
+  # ============================================================================
+  VPCId:
+    Description: VPC ID
+    Value: !GetAtt VPCStack.Outputs.VPC
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-VPC-ID
+
+  PublicSubnets:
+    Description: Public Subnets
+    Value: !GetAtt VPCStack.Outputs.PublicSubnets
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-PublicSubnets
+
+  PrivateSubnets:
+    Description: Private Subnets
+    Value: !GetAtt VPCStack.Outputs.PrivateSubnets
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-PrivateSubnets
+
+  # ============================================================================
+  # Security Group Outputs
+  # ============================================================================
+  ECSSecurityGroup:
+    Description: ECS Security Group
+    Value: !GetAtt SecurityGroupStack.Outputs.ECSSecurityGroup
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ECS-Security-Group
+
+  LoadBalancerSecurityGroup:
+    Description: Load Balancer Security Group
+    Value: !GetAtt SecurityGroupStack.Outputs.LoadbalancerSecurityGroup
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ALBSecurityGroup
+
+  # ============================================================================
+  # ECR Outputs
+  # ============================================================================
+  DjangoECRRepository:
+    Description: Django ECR Repository URI
+    Value: !GetAtt ECRStack.Outputs.DjangoRepositoryUri
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-DjangoRepositoryUri
+
+  FastAPIECRRepository:
+    Description: FastAPI ECR Repository URI
+    Value: !GetAtt ECRStack.Outputs.FastAPIRepositoryUri
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-FastAPIRepositoryUri
+
+  # ============================================================================
+  # S3 Outputs
+  # ============================================================================
+  DjangoBucket:
+    Description: Django S3 Bucket
+    Value: !GetAtt S3Stack.Outputs.DjangoBucketName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-DjangoBucket
+
+  FastAPIBucket:
+    Description: FastAPI S3 Bucket
+    Value: !GetAtt S3Stack.Outputs.FastAPIBucketName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-FastAPIBucket
+
+  # ============================================================================
+  # CloudFront Outputs
+  # ============================================================================
+  DjangoCDNDomain:
+    Description: Django CloudFront Domain
+    Value: !GetAtt CloudFrontStack.Outputs.DjangoCDNDomainName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-DjangoCDNDomain
+
+  FastAPICDNDomain:
+    Description: FastAPI CloudFront Domain
+    Value: !GetAtt CloudFrontStack.Outputs.FastAPICDNDomainName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-FastAPICDNDomain
+
+  # ============================================================================
+  # ECS Cluster Outputs
+  # ============================================================================
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !GetAtt ECSClusterStack.Outputs.ECSCluster
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ECSClusterName
+
+  # ============================================================================
+  # Load Balancer Outputs
+  # ============================================================================
+  LoadBalancerDNS:
+    Description: Load Balancer DNS Name
+    Value: !GetAtt LoadBalancerStack.Outputs.Loadbalancer
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-LoadBalancerDNS
+
+  # ============================================================================
+  # IAM Outputs
+  # ============================================================================
+  ECSTaskExecutionRoleArn:
+    Description: ECS Task Execution Role ARN
+    Value: !GetAtt IAMStack.Outputs.ECSTaskExecutionRoleArn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ECSTaskExecutionRoleArn
+
+  ECSTaskRoleArn:
+    Description: ECS Task Role ARN
+    Value: !GetAtt IAMStack.Outputs.ECSTaskRoleArn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ECSTaskRoleArn
+
+  # ============================================================================
+  # ECS Service Outputs
+  # ============================================================================
+  DjangoServiceName:
+    Description: Django ECS Service Name
+    Value: !GetAtt ECSServiceStack.Outputs.DjangoServiceName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-DjangoService
+
+  FastAPIServiceName:
+    Description: FastAPI ECS Service Name
+    Value: !GetAtt ECSServiceStack.Outputs.FastAPIServiceName
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-FastAPIService

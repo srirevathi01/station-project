@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: S3 buckets for Station Dev - deployment artifacts and static assets
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name for resource naming
+    Default: station
+  Environment:
+    Type: String
+    Description: Environment name (dev, stage, prod, etc.)
+    Default: dev
+
+Resources:
+  # S3 bucket for Django
+  DjangoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-django-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-django"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: django
+
+  # S3 bucket for FastAPI
+  FastAPIBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-fastapi-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-fastapi"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: fastapi
+
+Outputs:
+  DjangoBucketName:
+    Description: Django S3 bucket name
+    Value: !Ref DjangoBucket
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-django-bucket"
+
+  DjangoBucketArn:
+    Description: Django S3 bucket ARN
+    Value: !GetAtt DjangoBucket.Arn
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-django-bucket-arn"
+
+  FastAPIBucketName:
+    Description: FastAPI S3 bucket name
+    Value: !Ref FastAPIBucket
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-fastapi-bucket"
+
+  FastAPIBucketArn:
+    Description: FastAPI S3 bucket ARN
+    Value: !GetAtt FastAPIBucket.Arn
+    Export:
+      Name: !Sub "${ProjectName}-${Environment}-fastapi-bucket-arn"
