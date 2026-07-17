@@ -352,32 +352,32 @@ Outputs:
   # ============================================================================
   # S3 Outputs
   # ============================================================================
-  DjangoBucket:
-    Description: Django S3 Bucket
-    Value: !GetAtt S3Stack.Outputs.DjangoBucketName
+  FMBucket:
+    Description: FM frontend S3 bucket
+    Value: !GetAtt S3Stack.Outputs.FMBucketName
     Export:
-      Name: !Sub ${ProjectName}-${Environment}-DjangoBucket
+      Name: !Sub ${ProjectName}-${Environment}-FMBucket
 
-  FastAPIBucket:
-    Description: FastAPI S3 Bucket
-    Value: !GetAtt S3Stack.Outputs.FastAPIBucketName
+  CMBucket:
+    Description: Custom App (CM) frontend S3 bucket
+    Value: !GetAtt S3Stack.Outputs.CMBucketName
     Export:
-      Name: !Sub ${ProjectName}-${Environment}-FastAPIBucket
+      Name: !Sub ${ProjectName}-${Environment}-CMBucket
 
   # ============================================================================
   # CloudFront Outputs
   # ============================================================================
-  DjangoCDNDomain:
-    Description: Django CloudFront Domain
-    Value: !GetAtt CloudFrontStack.Outputs.DjangoCDNDomainName
+  FMCDNDomain:
+    Description: FM frontend CloudFront domain
+    Value: !GetAtt CloudFrontStack.Outputs.FMCDNDomainName
     Export:
-      Name: !Sub ${ProjectName}-${Environment}-DjangoCDNDomain
+      Name: !Sub ${ProjectName}-${Environment}-FMCDNDomain
 
-  FastAPICDNDomain:
-    Description: FastAPI CloudFront Domain
-    Value: !GetAtt CloudFrontStack.Outputs.FastAPICDNDomainName
+  CMCDNDomain:
+    Description: Custom App (CM) CloudFront domain
+    Value: !GetAtt CloudFrontStack.Outputs.CMCDNDomainName
     Export:
-      Name: !Sub ${ProjectName}-${Environment}-FastAPICDNDomain
+      Name: !Sub ${ProjectName}-${Environment}-CMCDNDomain
 
   # ============================================================================
   # ECS Cluster Outputs
