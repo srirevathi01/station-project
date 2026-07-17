@@ -12,9 +12,11 @@ Parameters:
   FMDomainName:
     Type: String
     Description: Custom domain for the FM frontend (e.g. fm.station.knackforge.com)
+    Default: ''
   CMDomainName:
     Type: String
     Description: Custom domain for the Custom App (CM) frontend (e.g. cm.station.knackforge.com)
+    Default: ''
 
 Resources:
   # ---- FM frontend ----
@@ -37,8 +39,6 @@ Resources:
         PriceClass: PriceClass_All
         HttpVersion: http2
         IPV6Enabled: true
-        Aliases:
-          - !Ref FMDomainName
         Origins:
           - Id: FMS3Origin
             DomainName: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
@@ -61,9 +61,7 @@ Resources:
             ResponsePagePath: /index.html
             ErrorCachingMinTTL: 0
         ViewerCertificate:
-          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
-          MinimumProtocolVersion: TLSv1.2_2021
-          SslSupportMethod: sni-only
+          CloudFrontDefaultCertificate: true
         Restrictions:
           GeoRestriction:
             RestrictionType: none
@@ -105,8 +103,6 @@ Resources:
         PriceClass: PriceClass_All
         HttpVersion: http2
         IPV6Enabled: true
-        Aliases:
-          - !Ref CMDomainName
         Origins:
           - Id: CMS3Origin
             DomainName: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
@@ -129,9 +125,7 @@ Resources:
             ResponsePagePath: /index.html
             ErrorCachingMinTTL: 0
         ViewerCertificate:
-          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
-          MinimumProtocolVersion: TLSv1.2_2021
-          SslSupportMethod: sni-only
+          CloudFrontDefaultCertificate: true
         Restrictions:
           GeoRestriction:
             RestrictionType: none
