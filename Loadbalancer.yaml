@@ -109,8 +109,6 @@ Outputs:
   Loadbalancer:
     Value: !GetAtt Loadbalancer.DNSName
     Description: Application Load Balancer DNS Name
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-LoadBalancerDNS
   ProdListener:
     Description: HTTPS Listener on port 443 (Django)
     Value: !Ref HTTPSListener1
