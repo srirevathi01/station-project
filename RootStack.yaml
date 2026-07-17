@@ -260,6 +260,7 @@ Resources:
       - ECSTaskDefinitionStack
       - SecurityGroupStack
       - TargetGroupsStack
+      - LoadBalancerStack
     Properties:
       TemplateURL: !Sub https://${TemplateBucketName}.s3.amazonaws.com/ECSService.yaml
       Parameters:
