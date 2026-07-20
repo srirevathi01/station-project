@@ -8,5 +8,5 @@ parameters:
   DesiredTaskCount: "2"
   DjangoContainerPort: "80"
   FastAPIContainerPort: "81"
-  FMDomainName: fm.station.knackforge.com
-  CMDomainName: cm.station.knackforge.com
+  FMDistributionId: EWPN15R7CDHZM
+  CMDistributionId: E3FZJBHWQ483PR

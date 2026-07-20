@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFront distributions for Station Dev FM and Custom App (CM) frontends
+Description: CloudFront bucket policies for Station Dev FM and Custom App (CM) frontends
 
 Parameters:
   Environment:
@@ -7,67 +7,15 @@ Parameters:
     Description: Environment name (dev, stage, prod, etc.)
   ProjectName:
     Type: String
-  SSLCertificateID:
+  FMDistributionId:
     Type: String
-  FMDomainName:
+    Description: Existing CloudFront Distribution ID for the FM frontend (e.g. EWPN15R7CDHZM)
+  CMDistributionId:
     Type: String
-    Description: Custom domain for the FM frontend (e.g. fm.station.knackforge.com)
-  CMDomainName:
-    Type: String
-    Description: Custom domain for the Custom App (CM) frontend (e.g. cm.station.knackforge.com)
+    Description: Existing CloudFront Distribution ID for the Custom App (CM) frontend (e.g. E3FZJBHWQ483PR)
 
 Resources:
   # ---- FM frontend ----
-  FMOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${ProjectName}-${Environment}-fm-oac"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  FMDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Comment: !Sub "${ProjectName}-${Environment} FM frontend"
-        Enabled: true
-        DefaultRootObject: index.html
-        PriceClass: PriceClass_All
-        HttpVersion: http2
-        IPV6Enabled: true
-        Aliases:
-          - !Ref FMDomainName
-        Origins:
-          - Id: FMS3Origin
-            DomainName: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
-            S3OriginConfig:
-              OriginAccessIdentity: ''
-            OriginAccessControlId: !GetAtt FMOAC.Id
-        DefaultCacheBehavior:
-          TargetOriginId: FMS3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          Compress: true
-        # React SPA: serve index.html for all 403/404s
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-        ViewerCertificate:
-          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
-          MinimumProtocolVersion: TLSv1.2_2021
-          SslSupportMethod: sni-only
-        Restrictions:
-          GeoRestriction:
-            RestrictionType: none
-
   FMBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -83,59 +31,9 @@ Resources:
             Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-fm-${AWS::AccountId}/*"
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FMDistribution}"
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FMDistributionId}"
 
   # ---- Custom App (CM) frontend ----
-  CMOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${ProjectName}-${Environment}-cm-oac"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  CMDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Comment: !Sub "${ProjectName}-${Environment} Custom App (CM) frontend"
-        Enabled: true
-        DefaultRootObject: index.html
-        PriceClass: PriceClass_All
-        HttpVersion: http2
-        IPV6Enabled: true
-        Aliases:
-          - !Ref CMDomainName
-        Origins:
-          - Id: CMS3Origin
-            DomainName: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
-            S3OriginConfig:
-              OriginAccessIdentity: ''
-            OriginAccessControlId: !GetAtt CMOAC.Id
-        DefaultCacheBehavior:
-          TargetOriginId: CMS3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          Compress: true
-        # React SPA: serve index.html for all 403/404s
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
-        ViewerCertificate:
-          AcmCertificateArn: !Sub "arn:aws:acm:us-east-1:${AWS::AccountId}:certificate/${SSLCertificateID}"
-          MinimumProtocolVersion: TLSv1.2_2021
-          SslSupportMethod: sni-only
-        Restrictions:
-          GeoRestriction:
-            RestrictionType: none
-
   CMBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -151,21 +49,21 @@ Resources:
             Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-cm-${AWS::AccountId}/*"
             Condition:
               StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CMDistribution}"
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CMDistributionId}"
 
 Outputs:
   FMCDNDomainName:
     Description: FM frontend CloudFront domain
-    Value: !GetAtt FMDistribution.DomainName
+    Value: !Sub "${FMDistributionId}.cloudfront.net"
 
   FMCDNId:
     Description: FM frontend CloudFront distribution ID
-    Value: !Ref FMDistribution
+    Value: !Ref FMDistributionId
 
   CMCDNDomainName:
     Description: Custom App (CM) CloudFront domain
-    Value: !GetAtt CMDistribution.DomainName
+    Value: !Sub "${CMDistributionId}.cloudfront.net"
 
   CMCDNId:
     Description: Custom App (CM) CloudFront distribution ID
-    Value: !Ref CMDistribution
+    Value: !Ref CMDistributionId
