@@ -2,7 +2,6 @@ template-file-path: RootStack.yaml
 parameters:
   Environment: dev
   ProjectName: station
-  TemplateBucketName: projectstationbucket
   SSLCertificateID: c1da16d4-7749-4a6b-9816-09c0497bff89
   VpcCIDR: 172.29.0.0/16
   DesiredTaskCount: "2"
