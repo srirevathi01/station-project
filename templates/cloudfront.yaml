@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFront bucket policies for Station Dev FM and Custom App (CM) frontends
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev, stage, prod, etc.)
+  ProjectName:
+    Type: String
+
+Resources:
+  FMOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${Environment}-fm-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CMOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${Environment}-cm-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FMDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${ProjectName}-${Environment} FM frontend distribution"
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: FMS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+            OriginAccessControlId: !Ref FMOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          TargetOriginId: FMS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  CMDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub "${ProjectName}-${Environment} CM frontend distribution"
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: CMS3Origin
+            DomainName: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+            OriginAccessControlId: !Ref CMOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          TargetOriginId: CMS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  # ---- FM frontend ----
+  FMBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub "${ProjectName}-${Environment}-fm-${AWS::AccountId}"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadFM
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-fm-${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FMDistribution}"
+
+  # ---- Custom App (CM) frontend ----
+  CMBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Sub "${ProjectName}-${Environment}-cm-${AWS::AccountId}"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadCM
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ProjectName}-${Environment}-cm-${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CMDistribution}"
+
+Outputs:
+  FMCDNDomainName:
+    Description: FM frontend CloudFront domain
+    Value: !GetAtt FMDistribution.DomainName
+
+  FMCDNId:
+    Description: FM frontend CloudFront distribution ID
+    Value: !Ref FMDistribution
+
+  CMCDNDomainName:
+    Description: Custom App (CM) CloudFront domain
+    Value: !GetAtt CMDistribution.DomainName
+
+  CMCDNId:
+    Description: Custom App (CM) CloudFront distribution ID
+    Value: !Ref CMDistribution

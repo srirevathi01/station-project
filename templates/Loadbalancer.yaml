@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Shared ALB with a dedicated prod+test listener pair per service (django, fastapi),
+  so each service's CodeDeploy DeploymentGroup can blue/green between its own pair.
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+  SSLCertificateID:
+    Type: String
+  LoadbalancerSecurityGroup:
+    Type: String
+    Description: Security Group ID for the ALB
+  PublicSubnets:
+    Type: String
+    Description: Comma-separated list of public subnet IDs
+  DjangoProdTargetGroup:
+    Type: String
+    Description: ARN of the Django target group currently receiving live traffic (blue)
+  DjangoTestTargetGroup:
+    Type: String
+    Description: ARN of the Django target group used to validate a new deployment before it goes live (green)
+  FastAPIProdTargetGroup:
+    Type: String
+    Description: ARN of the FastAPI target group currently receiving live traffic (blue)
+  FastAPITestTargetGroup:
+    Type: String
+    Description: ARN of the FastAPI target group used to validate a new deployment before it goes live (green)
+
+Resources:
+  Loadbalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-alb
+      # ALB requires at most one subnet per AZ.
+      # VPC export contains 6 public subnets (2 per AZ), so choose first 3.
+      Subnets:
+        - Fn::Select:
+            - 0
+            - Fn::Split:
+                - ','
+                - !Ref PublicSubnets
+        - Fn::Select:
+            - 1
+            - Fn::Split:
+                - ','
+                - !Ref PublicSubnets
+        - Fn::Select:
+            - 2
+            - Fn::Split:
+                - ','
+                - !Ref PublicSubnets
+      SecurityGroups:
+        - !Ref LoadbalancerSecurityGroup
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${Environment}-alb
+        - Key: Environment
+          Value: !Ref Environment
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Loadbalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Host: '#{host}'
+            Path: '/#{path}'
+            Query: '#{query}'
+            Port: 443
+            Protocol: HTTPS
+            StatusCode: HTTP_301
+
+  # Django - prod (live traffic)
+  DjangoProdListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${SSLCertificateID}"
+      LoadBalancerArn: !Ref Loadbalancer
+      Port: 443
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DjangoProdTargetGroup
+
+  # Django - test (CodeDeploy validates the new task set here before shifting prod traffic)
+  DjangoTestListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${SSLCertificateID}"
+      LoadBalancerArn: !Ref Loadbalancer
+      Port: 9443
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DjangoTestTargetGroup
+
+  # FastAPI - prod (live traffic)
+  FastAPIProdListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${SSLCertificateID}"
+      LoadBalancerArn: !Ref Loadbalancer
+      Port: 8443
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FastAPIProdTargetGroup
+
+  # FastAPI - test (CodeDeploy validates the new task set here before shifting prod traffic)
+  FastAPITestListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${SSLCertificateID}"
+      LoadBalancerArn: !Ref Loadbalancer
+      Port: 8444
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FastAPITestTargetGroup
+
+Outputs:
+  Loadbalancer:
+    Value: !GetAtt Loadbalancer.DNSName
+    Description: Application Load Balancer DNS Name
+  DjangoProdListener:
+    Description: HTTPS Listener on port 443 (Django prod)
+    Value: !Ref DjangoProdListener
+  DjangoTestListener:
+    Description: HTTPS Listener on port 9443 (Django test)
+    Value: !Ref DjangoTestListener
+  FastAPIProdListener:
+    Description: HTTPS Listener on port 8443 (FastAPI prod)
+    Value: !Ref FastAPIProdListener
+  FastAPITestListener:
+    Description: HTTPS Listener on port 8444 (FastAPI test)
+    Value: !Ref FastAPITestListener

@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  Environment:
+    Type: String
+    Description: "Environment name used in export names (for example: dev)"
+    MinLength: 1
+  ProjectName:
+    Type: String
+    Description: "Project name used in export names (for example: station)"
+    MinLength: 1
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID from VPC stack output
+
+Resources:
+  TargetGroup1:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-django-blue
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /healthy
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+  TargetGroup2:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-django-green
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /healthy
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+  TargetGroup3:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-fastapi-blue
+      Port: 8001
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /healthy
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+  TargetGroup4:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-fastapi-green
+      Port: 8001
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /healthy
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+  
+Outputs:
+  TargetGroup1:
+    Value: !Ref TargetGroup1
+  TargetGroup2:
+    Value: !Ref TargetGroup2
+  TargetGroup3:
+    Value: !Ref TargetGroup3
+  TargetGroup4:
+    Value: !Ref TargetGroup4
+  TargetGroup1Name:
+    Value: !GetAtt TargetGroup1.TargetGroupName
+  TargetGroup2Name:
+    Value: !GetAtt TargetGroup2.TargetGroupName
+  TargetGroup3Name:
+    Value: !GetAtt TargetGroup3.TargetGroupName
+  TargetGroup4Name:
+    Value: !GetAtt TargetGroup4.TargetGroupName

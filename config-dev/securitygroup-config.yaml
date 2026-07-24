@@ -1,0 +1,6 @@
+template-file-path: templates/SecurityGroup.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  VPC: ""
+tags: {}

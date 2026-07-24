@@ -1,0 +1,120 @@
+# Reusable - deployed once per frontend app (see config-dev/pipeline-fm-config.yaml and
+# config-dev/pipeline-custom-app-config.yaml). Unlike Pipeline.yaml (ECS blue/green),
+# these repos' own buildspec.yml both builds the React app AND deploys it (aws s3 sync +
+# cloudfront create-invalidation in the post_build phase) - so there's no separate
+# CodeDeploy step, and the Build action's outputs aren't consumed by anything further.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CodeBuild + CodePipeline (Source -> ManualApproval -> Build-and-deploy) for one
+  static frontend app. The ManualApproval stage has no SNS notification configured -
+  it's a bare console gate; approve it from the CodePipeline console/CLI.
+
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+  ServiceKey:
+    Type: String
+    Description: Short key used in resource names, e.g. fm or custom-app
+  GitHubOwner:
+    Type: String
+  GitHubRepo:
+    Type: String
+  GitHubBranch:
+    Type: String
+    Default: main
+  CodeStarConnectionArn:
+    Type: String
+  ArtifactsBucketName:
+    Type: String
+  CodeBuildServiceRoleArn:
+    Type: String
+  CodePipelineServiceRoleArn:
+    Type: String
+  SiteBucketName:
+    Type: String
+    Description: S3 bucket the built site is synced to
+  CloudFrontDistributionId:
+    Type: String
+    Description: CloudFront distribution invalidated after each deploy
+
+Resources:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-${ServiceKey}-build
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Source:
+        Type: CODEPIPELINE
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref SiteBucketName
+          - Name: CLOUDFRONT_DISTRIBUTION_ID
+            Value: !Ref CloudFrontDistributionId
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Name
+          Value: !Sub ${ProjectName}-${Environment}-${ServiceKey}-build
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-${ServiceKey}-pipeline
+      RoleArn: !Ref CodePipelineServiceRoleArn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        - Name: ManualApproval
+          Actions:
+            - Name: Approval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+
+        - Name: Build
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildProject

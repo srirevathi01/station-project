@@ -1,0 +1,20 @@
+template-file-path: templates/Pipeline.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  ServiceKey: fastapi
+  GitHubOwner: Madhumitha061104
+  GitHubRepo: station-fastapi
+  GitHubBranch: main
+  CodeStarConnectionArn: ""
+  ArtifactsBucketName: ""
+  CodeBuildServiceRoleArn: ""
+  CodePipelineServiceRoleArn: ""
+  CodeDeployServiceRoleArn: ""
+  ECSClusterName: ""
+  ECSServiceName: ""
+  BlueTargetGroupName: ""
+  GreenTargetGroupName: ""
+  ProdListenerArn: ""
+  TestListenerArn: ""
+tags: {}

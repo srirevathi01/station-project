@@ -1,0 +1,5 @@
+template-file-path: templates/S3.yaml
+parameters:
+  ProjectName: station
+  Environment: dev
+tags: {}

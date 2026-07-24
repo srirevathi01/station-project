@@ -1,0 +1,188 @@
+# Reusable - deployed once per service (see config-dev/pipeline-django-config.yaml and
+# config-dev/pipeline-fastapi-config.yaml). Builds the service's own repo (buildspec.yml
+# at its root builds+pushes the Docker image) and blue/green-deploys it via CodeDeploy,
+# using that repo's own appspec.yaml/taskdef.json as the CodeDeployToECS artifacts.
+#
+# Note: pipelines/station-django/buildspec.yml and pipelines/station-fastapi/buildspec.yml
+# hardcode AWS_ACCOUNT_ID/AWS_DEFAULT_REGION - those must match the account/region this
+# stack is deployed into, or the ECR login/push step in CodeBuild will fail.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CodeBuild + CodePipeline (Source -> Build -> ManualApproval -> Deploy) + CodeDeploy
+  (ECS blue/green) for one service. The ManualApproval stage has no SNS notification
+  configured - it's a bare console gate; approve it from the CodePipeline console/CLI.
+
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+  ServiceKey:
+    Type: String
+    Description: Short key used in resource names, e.g. django or fastapi
+  GitHubOwner:
+    Type: String
+  GitHubRepo:
+    Type: String
+  GitHubBranch:
+    Type: String
+    Default: main
+  CodeStarConnectionArn:
+    Type: String
+  ArtifactsBucketName:
+    Type: String
+  CodeBuildServiceRoleArn:
+    Type: String
+  CodePipelineServiceRoleArn:
+    Type: String
+  CodeDeployServiceRoleArn:
+    Type: String
+  ECSClusterName:
+    Type: String
+  ECSServiceName:
+    Type: String
+  BlueTargetGroupName:
+    Type: String
+  GreenTargetGroupName:
+    Type: String
+  ProdListenerArn:
+    Type: String
+  TestListenerArn:
+    Type: String
+
+Resources:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-${ServiceKey}-build
+      ServiceRole: !Ref CodeBuildServiceRoleArn
+      Source:
+        Type: CODEPIPELINE
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Name
+          Value: !Sub ${ProjectName}-${Environment}-${ServiceKey}-build
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub ${ProjectName}-${Environment}-${ServiceKey}
+      ComputePlatform: ECS
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Sub ${ProjectName}-${Environment}-${ServiceKey}-dg
+      ServiceRoleArn: !Ref CodeDeployServiceRoleArn
+      DeploymentConfigName: CodeDeployDefault.ECSAllAtOnce
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      BlueGreenDeploymentConfiguration:
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: 5
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+      ECSServices:
+        - ClusterName: !Ref ECSClusterName
+          ServiceName: !Ref ECSServiceName
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - TargetGroups:
+              - Name: !Ref BlueTargetGroupName
+              - Name: !Ref GreenTargetGroupName
+            ProdTrafficRoute:
+              ListenerArns:
+                - !Ref ProdListenerArn
+            TestTrafficRoute:
+              ListenerArns:
+                - !Ref TestListenerArn
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-${ServiceKey}-pipeline
+      RoleArn: !Ref CodePipelineServiceRoleArn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+
+        - Name: ManualApproval
+          Actions:
+            - Name: Approval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeployToECS
+                Version: '1'
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+                TaskDefinitionTemplateArtifact: BuildOutput
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: BuildOutput
+                AppSpecTemplatePath: appspec.yaml
+                Image1ArtifactName: BuildOutput
+                Image1ContainerName: IMAGE1_NAME
+              InputArtifacts:
+                - Name: BuildOutput
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
+  CodeDeployApplicationName:
+    Value: !Ref CodeDeployApplication
+  CodeDeployDeploymentGroupName:
+    Value: !Ref CodeDeployDeploymentGroup
+  CodeBuildProjectName:
+    Value: !Ref CodeBuildProject

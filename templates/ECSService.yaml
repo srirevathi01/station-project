@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Creates ECS services for Django and FastAPI, with DeploymentController=CODE_DEPLOY
+  so CodeDeploy (see templates/Pipeline.yaml) owns blue/green task-set swaps. Once a
+  service has gone through its first CodeDeploy deployment, don't redeploy this stack
+  to change its TaskDefinition/image - CodeDeploy manages that outside of CloudFormation
+  and a CFN update here could revert or conflict with an in-flight/completed deployment.
+
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+  DjangoContainerPort:
+    Type: Number
+    Default: 8000
+  FastAPIContainerPort:
+    Type: Number
+    Default: 8001
+  DesiredTaskCount:
+    Type: Number
+    Default: 2
+    Description: Number of tasks to run initially
+    MinValue: 0
+  ECSCluster:
+    Type: String
+    Description: ECS Cluster name or ARN
+  DjangoTaskDefinitionArn:
+    Type: String
+    Description: ARN of the Django task definition
+  FastAPITaskDefinitionArn:
+    Type: String
+    Description: ARN of the FastAPI task definition
+  TargetGroup1:
+    Type: String
+    Description: ARN of Django target group
+  TargetGroup3:
+    Type: String
+    Description: ARN of FastAPI target group
+  ECSSecurityGroup:
+    Type: String
+    Description: ECS security group ID
+  PrivateSubnets:
+    Type: String
+    Description: Comma-separated list of private subnet IDs
+
+Resources:
+  DjangoService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${ProjectName}-${Environment}-django
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredTaskCount
+      TaskDefinition: !Ref DjangoTaskDefinitionArn
+      DeploymentController:
+        Type: CODE_DEPLOY
+      LoadBalancers:
+        - ContainerName: django
+          ContainerPort: !Ref DjangoContainerPort
+          TargetGroupArn: !Ref TargetGroup1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+          Subnets:
+            Fn::Split:
+              - ','
+              - !Ref PrivateSubnets
+
+  FastAPIService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${ProjectName}-${Environment}-fastapi
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredTaskCount
+      TaskDefinition: !Ref FastAPITaskDefinitionArn
+      DeploymentController:
+        Type: CODE_DEPLOY
+      LoadBalancers:
+        - ContainerName: fastapi
+          ContainerPort: !Ref FastAPIContainerPort
+          TargetGroupArn: !Ref TargetGroup3
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+          Subnets:
+            Fn::Split:
+              - ','
+              - !Ref PrivateSubnets
+
+Outputs:
+  # Deliberately !Sub the literal name (matching each service's own ServiceName
+  # property) rather than !Ref the resource: Ref on AWS::ECS::Service returns the
+  # service ARN once an account has ECS long-ARN format enabled (the default for new
+  # accounts), and CodeDeploy's ECSServices config needs a plain name, not an ARN.
+  DjangoServiceName:
+    Value: !Sub ${ProjectName}-${Environment}-django
+  FastAPIServiceName:
+    Value: !Sub ${ProjectName}-${Environment}-fastapi
+

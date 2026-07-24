@@ -1,0 +1,5 @@
+template-file-path: templates/IAM.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+tags: {}
