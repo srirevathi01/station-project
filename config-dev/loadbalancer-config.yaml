@@ -1,0 +1,12 @@
+template-file-path: templates/Loadbalancer.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  SSLCertificateID: c1da16d4-7749-4a6b-9816-09c0497bff89
+  LoadbalancerSecurityGroup: ""
+  PublicSubnets: ""
+  DjangoProdTargetGroup: ""
+  DjangoTestTargetGroup: ""
+  FastAPIProdTargetGroup: ""
+  FastAPITestTargetGroup: ""
+tags: {}

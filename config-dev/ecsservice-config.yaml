@@ -1,0 +1,15 @@
+template-file-path: templates/ECSService.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  DjangoContainerPort: "8000"
+  FastAPIContainerPort: "8001"
+  DesiredTaskCount: "2"
+  ECSCluster: ""
+  DjangoTaskDefinitionArn: ""
+  FastAPITaskDefinitionArn: ""
+  TargetGroup1: ""
+  TargetGroup3: ""
+  ECSSecurityGroup: ""
+  PrivateSubnets: ""
+tags: {}

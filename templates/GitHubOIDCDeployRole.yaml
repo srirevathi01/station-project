@@ -1,0 +1,219 @@
+# One-time bootstrap - deploy this yourself with your existing AWS credentials
+# before the GitHub Actions workflow can run (the workflow's own auth depends on
+# the role this template creates). Not part of the config-dev/ stack pipeline.
+#
+# Only one OIDC provider for a given URL is allowed per AWS account. Check first:
+#   aws iam list-open-id-connect-providers
+# If one for token.actions.githubusercontent.com already exists, pass
+# CreateOIDCProvider=false and ExistingOIDCProviderArn=<that ARN> below instead.
+#
+# Example deploy:
+#   aws cloudformation deploy \
+#     --template-file templates/GitHubOIDCDeployRole.yaml \
+#     --stack-name station-dev-github-oidc \
+#     --parameter-overrides \
+#       GitHubOrg=<your-org-or-username> \
+#       GitHubRepo=<your-repo-name> \
+#       GitHubBranch=main \
+#       ProjectName=station \
+#       Environment=dev \
+#     --capabilities CAPABILITY_NAMED_IAM
+#
+# Then take the DeployRoleArn output and set it as the AWS_DEPLOY_ROLE_ARN
+# repo variable in GitHub (Settings -> Secrets and variables -> Actions -> Variables),
+# along with an AWS_REGION variable.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  IAM OIDC trust for GitHub Actions to deploy the station CloudFormation stacks
+  without long-lived AWS keys.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub org or user that owns the repo
+  GitHubRepo:
+    Type: String
+    Description: Repository name (without the org/ prefix)
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch the workflow is allowed to assume this role from
+  ProjectName:
+    Type: String
+    Default: station
+  Environment:
+    Type: String
+    Default: dev
+  CreateOIDCProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Set to false if a token.actions.githubusercontent.com OIDC provider already exists in this account
+  ExistingOIDCProviderArn:
+    Type: String
+    Default: ''
+    Description: Used instead of creating a new provider when CreateOIDCProvider=false
+
+Conditions:
+  ShouldCreateOIDCProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS verifies GitHub's certificate chain directly for Amazon-trusted CAs;
+      # these thumbprints are required by the resource schema but not otherwise used.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-github-deploy-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [ShouldCreateOIDCProvider, !Ref GitHubOIDCProvider, !Ref ExistingOIDCProviderArn]
+            Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
+      # Scoped to what templates/*.yaml actually create for this project/environment.
+      # EC2, ELB, ECS and CloudFront are left as service-wide (*) because most of
+      # their create/describe actions don't support resource-level restriction -
+      # tighten further before reusing this pattern for a prod environment.
+      Policies:
+        - PolicyName: CloudFormationDeploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormationStacks
+                Effect: Allow
+                Action:
+                  - 'cloudformation:CreateStack'
+                  - 'cloudformation:UpdateStack'
+                  - 'cloudformation:DeleteStack'
+                  - 'cloudformation:DescribeStacks'
+                  - 'cloudformation:DescribeStackEvents'
+                  - 'cloudformation:DescribeStackResource'
+                  - 'cloudformation:DescribeStackResources'
+                  - 'cloudformation:GetTemplate'
+                  - 'cloudformation:ValidateTemplate'
+                  - 'cloudformation:ListStacks'
+                  - 'cloudformation:ListStackResources'
+                  - 'cloudformation:CreateChangeSet'
+                  - 'cloudformation:DescribeChangeSet'
+                  - 'cloudformation:ExecuteChangeSet'
+                  - 'cloudformation:DeleteChangeSet'
+                  - 'cloudformation:TagResource'
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-${Environment}-*/*'
+        - PolicyName: EC2AndLoadBalancing
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EC2Full
+                Effect: Allow
+                Action:
+                  - 'ec2:*'
+                Resource: '*'
+              - Sid: ELBFull
+                Effect: Allow
+                Action:
+                  - 'elasticloadbalancing:*'
+                Resource: '*'
+        - PolicyName: ECSAndCloudFront
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ECSFull
+                Effect: Allow
+                Action:
+                  - 'ecs:*'
+                Resource: '*'
+              - Sid: CloudFrontFull
+                Effect: Allow
+                Action:
+                  - 'cloudfront:*'
+                Resource: '*'
+        - PolicyName: ECR
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ECRAuth
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: ECRRepos
+                Effect: Allow
+                Action:
+                  - 'ecr:*'
+                Resource:
+                  - !Sub 'arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}-${Environment}-*'
+        - PolicyName: S3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ProjectBuckets
+                Effect: Allow
+                Action:
+                  - 's3:*'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*'
+                  - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*/*'
+        - PolicyName: Logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LogGroups
+                Effect: Allow
+                Action:
+                  - 'logs:*'
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}-${Environment}-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-${Environment}-*'
+        - PolicyName: IAMForProjectRoles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageProjectRoles
+                Effect: Allow
+                Action:
+                  - 'iam:CreateRole'
+                  - 'iam:DeleteRole'
+                  - 'iam:GetRole'
+                  - 'iam:UpdateRole'
+                  - 'iam:UpdateAssumeRolePolicy'
+                  - 'iam:PutRolePolicy'
+                  - 'iam:DeleteRolePolicy'
+                  - 'iam:GetRolePolicy'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:ListRolePolicies'
+                  - 'iam:ListAttachedRolePolicies'
+                  - 'iam:TagRole'
+                  - 'iam:UntagRole'
+                  - 'iam:PassRole'
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*'
+
+Outputs:
+  DeployRoleArn:
+    Description: Role ARN to set as the AWS_DEPLOY_ROLE_ARN GitHub Actions repo variable
+    Value: !GetAtt GitHubDeployRole.Arn
+
+  OIDCProviderArn:
+    Condition: ShouldCreateOIDCProvider
+    Description: Created OIDC provider ARN (reuse via ExistingOIDCProviderArn for other roles)
+    Value: !Ref GitHubOIDCProvider

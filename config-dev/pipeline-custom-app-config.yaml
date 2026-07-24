@@ -1,0 +1,15 @@
+template-file-path: templates/StaticSitePipeline.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  ServiceKey: custom-app
+  GitHubOwner: Madhumitha061104
+  GitHubRepo: station-cm-app
+  GitHubBranch: main
+  CodeStarConnectionArn: ""
+  ArtifactsBucketName: ""
+  CodeBuildServiceRoleArn: ""
+  CodePipelineServiceRoleArn: ""
+  SiteBucketName: ""
+  CloudFrontDistributionId: ""
+tags: {}

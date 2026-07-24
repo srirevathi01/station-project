@@ -1,0 +1,15 @@
+template-file-path: templates/StaticSitePipeline.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  ServiceKey: fm
+  GitHubOwner: Madhumitha061104
+  GitHubRepo: station-fm-app
+  GitHubBranch: main
+  CodeStarConnectionArn: ""
+  ArtifactsBucketName: ""
+  CodeBuildServiceRoleArn: ""
+  CodePipelineServiceRoleArn: ""
+  SiteBucketName: ""
+  CloudFrontDistributionId: ""
+tags: {}

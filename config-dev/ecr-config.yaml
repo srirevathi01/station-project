@@ -1,0 +1,5 @@
+template-file-path: templates/ECR.yaml
+parameters:
+  ProjectName: station
+  Environment: dev
+tags: {}

@@ -1,0 +1,5 @@
+template-file-path: templates/ECSCluster.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+tags: {}

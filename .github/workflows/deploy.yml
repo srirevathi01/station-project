@@ -1,0 +1,555 @@
+name: Deploy CloudFormation stacks
+
+# Each stack gets up to three steps:
+#   1. "Render <key> params"  - scripts/render_stack.py loads config-dev/<key>-config.yaml,
+#      merges in any dynamic (cross-stack) values, and decides whether this run should
+#      deploy it (workflow_dispatch: honors the "only" input; push: only if this stack's
+#      config or template file changed in the commit).
+#   2. "Deploy <key>"         - aws-actions/aws-cloudformation-github-deploy, skipped when
+#      step 1 decided deploy=false.
+#   3. "Resolve <key> outputs" (only for stacks other stacks depend on) - always runs,
+#      via `aws cloudformation describe-stacks`, so downstream stacks have a single
+#      reliable place (steps.<key>.outputs.*) to read outputs from regardless of whether
+#      this run deployed the stack or it was already up to date.
+#
+# templates/ECS.yaml + config-dev/ecs-config.yaml duplicate the ecscluster stack (same
+# ClusterName -> deploying both conflicts) and are intentionally left out of this pipeline.
+
+on:
+  # Initial full deploy, or a manual re-run of one stack: run this by hand.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy (selects config-<environment>/)
+        type: choice
+        options:
+          - dev
+        default: dev
+      only:
+        description: 'Optional: deploy only this stack key (e.g. vpc, loadbalancer, ecsservice). Blank deploys everything.'
+        type: string
+        required: false
+      dry_run:
+        description: 'Create change sets for review without executing them (only meaningful once stacks already exist)'
+        type: boolean
+        default: false
+
+  # Incremental deploy - fires when a template/config file changes on main; each stack's
+  # own render step decides whether it's affected. "Re-run jobs" on a past run replays
+  # the same push event, so it re-evaluates the same file diff, not a fresh one.
+  push:
+    branches: [main]
+    paths:
+      - 'templates/**'
+      - 'config-dev/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: station-dev-deploy
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+  MODE: ${{ inputs.dry_run && 'create-only' || 'create-and-execute' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install pyyaml
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Determine changed files
+        if: github.event_name == 'push'
+        id: changed
+        run: |
+          BEFORE="${{ github.event.before }}"
+          EMPTY_TREE="0000000000000000000000000000000000000000"
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$EMPTY_TREE" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            BASE=$(git hash-object -t tree /dev/null)
+          else
+            BASE="$BEFORE"
+          fi
+          FILES=$(git diff --name-only "$BASE" "${{ github.sha }}")
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FILES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------- vpc
+      - name: Render vpc params
+        id: vpc-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack vpc --config vpc-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy vpc
+        if: steps.vpc-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.vpc-params.outputs.name }}
+          template: ${{ steps.vpc-params.outputs.template }}
+          parameter-overrides: ${{ steps.vpc-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve vpc outputs
+        id: vpc
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.vpc-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------- iam
+      - name: Render iam params
+        id: iam-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack iam --config iam-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy iam
+        if: steps.iam-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.iam-params.outputs.name }}
+          template: ${{ steps.iam-params.outputs.template }}
+          parameter-overrides: ${{ steps.iam-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve iam outputs
+        id: iam
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.iam-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------- ecr
+      - name: Render ecr params
+        id: ecr-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack ecr --config ecr-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy ecr
+        if: steps.ecr-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.ecr-params.outputs.name }}
+          template: ${{ steps.ecr-params.outputs.template }}
+          parameter-overrides: ${{ steps.ecr-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      # ---------------------------------------------------------------- s3
+      - name: Render s3 params
+        id: s3-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack s3 --config s3-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy s3
+        if: steps.s3-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.s3-params.outputs.name }}
+          template: ${{ steps.s3-params.outputs.template }}
+          parameter-overrides: ${{ steps.s3-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve s3 outputs
+        id: s3
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.s3-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------- securitygroup
+      - name: Render securitygroup params
+        id: securitygroup-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack securitygroup --config securitygroup-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "VPC=${{ steps.vpc.outputs.VPC }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy securitygroup
+        if: steps.securitygroup-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.securitygroup-params.outputs.name }}
+          template: ${{ steps.securitygroup-params.outputs.template }}
+          parameter-overrides: ${{ steps.securitygroup-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve securitygroup outputs
+        id: securitygroup
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.securitygroup-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # --------------------------------------------------------- targetgroups
+      - name: Render targetgroups params
+        id: targetgroups-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack targetgroups --config targetgroups-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "VPC=${{ steps.vpc.outputs.VPC }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy targetgroups
+        if: steps.targetgroups-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.targetgroups-params.outputs.name }}
+          template: ${{ steps.targetgroups-params.outputs.template }}
+          parameter-overrides: ${{ steps.targetgroups-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve targetgroups outputs
+        id: targetgroups
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.targetgroups-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------- loadbalancer
+      # Each service gets its own prod+test target group pair: TargetGroup1/2 are
+      # django blue/green, TargetGroup3/4 are fastapi blue/green (see TargetGroups.yaml).
+      - name: Render loadbalancer params
+        id: loadbalancer-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack loadbalancer --config loadbalancer-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "LoadbalancerSecurityGroup=${{ steps.securitygroup.outputs.LoadbalancerSecurityGroup }}" \
+            --set "PublicSubnets=${{ steps.vpc.outputs.PublicSubnets }}" \
+            --set "DjangoProdTargetGroup=${{ steps.targetgroups.outputs.TargetGroup1 }}" \
+            --set "DjangoTestTargetGroup=${{ steps.targetgroups.outputs.TargetGroup2 }}" \
+            --set "FastAPIProdTargetGroup=${{ steps.targetgroups.outputs.TargetGroup3 }}" \
+            --set "FastAPITestTargetGroup=${{ steps.targetgroups.outputs.TargetGroup4 }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy loadbalancer
+        if: steps.loadbalancer-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.loadbalancer-params.outputs.name }}
+          template: ${{ steps.loadbalancer-params.outputs.template }}
+          parameter-overrides: ${{ steps.loadbalancer-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve loadbalancer outputs
+        id: loadbalancer
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.loadbalancer-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------- ecscluster
+      - name: Render ecscluster params
+        id: ecscluster-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack ecscluster --config ecscluster-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy ecscluster
+        if: steps.ecscluster-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.ecscluster-params.outputs.name }}
+          template: ${{ steps.ecscluster-params.outputs.template }}
+          parameter-overrides: ${{ steps.ecscluster-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve ecscluster outputs
+        id: ecscluster
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.ecscluster-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------ ecstaskdefinition
+      - name: Render ecstaskdefinition params
+        id: ecstaskdefinition-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack ecstaskdefinition --config ecstaskdefinition-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "ECSTaskExecutionRoleArn=${{ steps.iam.outputs.ECSTaskExecutionRoleArn }}" \
+            --set "ECSTaskRoleArn=${{ steps.iam.outputs.ECSTaskRoleArn }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy ecstaskdefinition
+        if: steps.ecstaskdefinition-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.ecstaskdefinition-params.outputs.name }}
+          template: ${{ steps.ecstaskdefinition-params.outputs.template }}
+          parameter-overrides: ${{ steps.ecstaskdefinition-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve ecstaskdefinition outputs
+        id: ecstaskdefinition
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.ecstaskdefinition-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------- ecsservice
+      - name: Render ecsservice params
+        id: ecsservice-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack ecsservice --config ecsservice-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "ECSCluster=${{ steps.ecscluster.outputs.ECSCluster }}" \
+            --set "DjangoTaskDefinitionArn=${{ steps.ecstaskdefinition.outputs.DjangoTaskDefinitionArn }}" \
+            --set "FastAPITaskDefinitionArn=${{ steps.ecstaskdefinition.outputs.FastAPITaskDefinitionArn }}" \
+            --set "TargetGroup1=${{ steps.targetgroups.outputs.TargetGroup1 }}" \
+            --set "TargetGroup3=${{ steps.targetgroups.outputs.TargetGroup3 }}" \
+            --set "ECSSecurityGroup=${{ steps.securitygroup.outputs.ECSSecurityGroup }}" \
+            --set "PrivateSubnets=${{ steps.vpc.outputs.PrivateSubnets }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy ecsservice
+        if: steps.ecsservice-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.ecsservice-params.outputs.name }}
+          template: ${{ steps.ecsservice-params.outputs.template }}
+          parameter-overrides: ${{ steps.ecsservice-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve ecsservice outputs
+        id: ecsservice
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.ecsservice-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------- codestarconnection
+      - name: Render codestarconnection params
+        id: codestarconnection-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack codestarconnection --config codestarconnection-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy codestarconnection
+        if: steps.codestarconnection-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.codestarconnection-params.outputs.name }}
+          template: ${{ steps.codestarconnection-params.outputs.template }}
+          parameter-overrides: ${{ steps.codestarconnection-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve codestarconnection outputs
+        id: codestarconnection
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.codestarconnection-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------ pipeline-django
+      # First deploy of this connection: complete the GitHub App handshake in the AWS
+      # Console (Developer Tools -> Settings -> Connections) before this pipeline can
+      # fetch source - see templates/CodeStarConnection.yaml.
+      - name: Render pipeline-django params
+        id: pipeline-django-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack pipeline-django --config pipeline-django-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "CodeStarConnectionArn=${{ steps.codestarconnection.outputs.ConnectionArn }}" \
+            --set "ArtifactsBucketName=${{ steps.s3.outputs.PipelineArtifactsBucketName }}" \
+            --set "CodeBuildServiceRoleArn=${{ steps.iam.outputs.CodeBuildServiceRoleArn }}" \
+            --set "CodePipelineServiceRoleArn=${{ steps.iam.outputs.CodePipelineServiceRoleArn }}" \
+            --set "CodeDeployServiceRoleArn=${{ steps.iam.outputs.CodeDeployServiceRoleArn }}" \
+            --set "ECSClusterName=${{ steps.ecscluster.outputs.ECSCluster }}" \
+            --set "ECSServiceName=${{ steps.ecsservice.outputs.DjangoServiceName }}" \
+            --set "BlueTargetGroupName=${{ steps.targetgroups.outputs.TargetGroup1Name }}" \
+            --set "GreenTargetGroupName=${{ steps.targetgroups.outputs.TargetGroup2Name }}" \
+            --set "ProdListenerArn=${{ steps.loadbalancer.outputs.DjangoProdListener }}" \
+            --set "TestListenerArn=${{ steps.loadbalancer.outputs.DjangoTestListener }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pipeline-django
+        if: steps.pipeline-django-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.pipeline-django-params.outputs.name }}
+          template: ${{ steps.pipeline-django-params.outputs.template }}
+          parameter-overrides: ${{ steps.pipeline-django-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      # ----------------------------------------------------------- pipeline-fastapi
+      - name: Render pipeline-fastapi params
+        id: pipeline-fastapi-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack pipeline-fastapi --config pipeline-fastapi-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "CodeStarConnectionArn=${{ steps.codestarconnection.outputs.ConnectionArn }}" \
+            --set "ArtifactsBucketName=${{ steps.s3.outputs.PipelineArtifactsBucketName }}" \
+            --set "CodeBuildServiceRoleArn=${{ steps.iam.outputs.CodeBuildServiceRoleArn }}" \
+            --set "CodePipelineServiceRoleArn=${{ steps.iam.outputs.CodePipelineServiceRoleArn }}" \
+            --set "CodeDeployServiceRoleArn=${{ steps.iam.outputs.CodeDeployServiceRoleArn }}" \
+            --set "ECSClusterName=${{ steps.ecscluster.outputs.ECSCluster }}" \
+            --set "ECSServiceName=${{ steps.ecsservice.outputs.FastAPIServiceName }}" \
+            --set "BlueTargetGroupName=${{ steps.targetgroups.outputs.TargetGroup3Name }}" \
+            --set "GreenTargetGroupName=${{ steps.targetgroups.outputs.TargetGroup4Name }}" \
+            --set "ProdListenerArn=${{ steps.loadbalancer.outputs.FastAPIProdListener }}" \
+            --set "TestListenerArn=${{ steps.loadbalancer.outputs.FastAPITestListener }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pipeline-fastapi
+        if: steps.pipeline-fastapi-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.pipeline-fastapi-params.outputs.name }}
+          template: ${{ steps.pipeline-fastapi-params.outputs.template }}
+          parameter-overrides: ${{ steps.pipeline-fastapi-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      # ------------------------------------------------------------- cloudfront
+      - name: Render cloudfront params
+        id: cloudfront-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack cloudfront --config cloudfront-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy cloudfront
+        if: steps.cloudfront-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.cloudfront-params.outputs.name }}
+          template: ${{ steps.cloudfront-params.outputs.template }}
+          parameter-overrides: ${{ steps.cloudfront-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      - name: Resolve cloudfront outputs
+        id: cloudfront
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ steps.cloudfront-params.outputs.name }}" \
+            --query "Stacks[0].Outputs" --output json \
+          | jq -r '.[] | "\(.OutputKey)=\(.OutputValue)"' >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------- pipeline-fm
+      - name: Render pipeline-fm params
+        id: pipeline-fm-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack pipeline-fm --config pipeline-fm-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "CodeStarConnectionArn=${{ steps.codestarconnection.outputs.ConnectionArn }}" \
+            --set "ArtifactsBucketName=${{ steps.s3.outputs.PipelineArtifactsBucketName }}" \
+            --set "CodeBuildServiceRoleArn=${{ steps.iam.outputs.CodeBuildServiceRoleArn }}" \
+            --set "CodePipelineServiceRoleArn=${{ steps.iam.outputs.CodePipelineServiceRoleArn }}" \
+            --set "SiteBucketName=${{ steps.s3.outputs.FMBucketName }}" \
+            --set "CloudFrontDistributionId=${{ steps.cloudfront.outputs.FMCDNId }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pipeline-fm
+        if: steps.pipeline-fm-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.pipeline-fm-params.outputs.name }}
+          template: ${{ steps.pipeline-fm-params.outputs.template }}
+          parameter-overrides: ${{ steps.pipeline-fm-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}
+
+      # ------------------------------------------------------------- pipeline-custom-app
+      - name: Render pipeline-custom-app params
+        id: pipeline-custom-app-params
+        run: |
+          python scripts/render_stack.py \
+            --env "$ENVIRONMENT" --stack pipeline-custom-app --config pipeline-custom-app-config.yaml \
+            --event ${{ github.event_name }} --only "${{ inputs.only }}" \
+            --changed-files "${{ steps.changed.outputs.files }}" \
+            --set "CodeStarConnectionArn=${{ steps.codestarconnection.outputs.ConnectionArn }}" \
+            --set "ArtifactsBucketName=${{ steps.s3.outputs.PipelineArtifactsBucketName }}" \
+            --set "CodeBuildServiceRoleArn=${{ steps.iam.outputs.CodeBuildServiceRoleArn }}" \
+            --set "CodePipelineServiceRoleArn=${{ steps.iam.outputs.CodePipelineServiceRoleArn }}" \
+            --set "SiteBucketName=${{ steps.s3.outputs.CMBucketName }}" \
+            --set "CloudFrontDistributionId=${{ steps.cloudfront.outputs.CMCDNId }}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pipeline-custom-app
+        if: steps.pipeline-custom-app-params.outputs.deploy == 'true'
+        uses: aws-actions/aws-cloudformation-github-deploy@v2
+        with:
+          name: ${{ steps.pipeline-custom-app-params.outputs.name }}
+          template: ${{ steps.pipeline-custom-app-params.outputs.template }}
+          parameter-overrides: ${{ steps.pipeline-custom-app-params.outputs.overrides }}
+          capabilities: CAPABILITY_NAMED_IAM
+          mode: ${{ env.MODE }}

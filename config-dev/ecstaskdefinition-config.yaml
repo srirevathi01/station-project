@@ -1,0 +1,9 @@
+template-file-path: templates/ECSTaskDefinition.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  DjangoContainerPort: "8000"
+  FastAPIContainerPort: "8001"
+  ECSTaskExecutionRoleArn: ""
+  ECSTaskRoleArn: ""
+tags: {}

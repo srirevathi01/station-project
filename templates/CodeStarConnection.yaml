@@ -1,0 +1,27 @@
+# After this stack deploys, the connection sits in PENDING status until you complete
+# the GitHub App handshake once, by hand, in the AWS Console:
+#   Developer Tools -> Settings -> Connections -> station-dev-github -> Update pending connection
+# CloudFormation/the CLI cannot complete this step; pipelines using this connection will
+# fail to fetch source until it's done.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Shared GitHub CodeStar connection, reused by every service's CodePipeline.
+
+Parameters:
+  Environment:
+    Type: String
+  ProjectName:
+    Type: String
+    Default: station
+
+Resources:
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub ${ProjectName}-${Environment}-github
+      ProviderType: GitHub
+
+Outputs:
+  ConnectionArn:
+    Description: Pass this to each service's Pipeline.yaml stack as CodeStarConnectionArn
+    Value: !Ref GitHubConnection

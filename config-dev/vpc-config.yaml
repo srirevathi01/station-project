@@ -1,0 +1,18 @@
+template-file-path: templates/VPC.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  VpcCIDR: 172.29.0.0/16
+  PublicSubnet1CIDR: 172.29.0.0/20
+  PublicSubnet2CIDR: 172.29.16.0/20
+  PublicSubnet3CIDR: 172.29.32.0/20
+  PublicSubnet4CIDR: 172.29.48.0/20
+  PublicSubnet5CIDR: 172.29.64.0/20
+  PublicSubnet6CIDR: 172.29.80.0/20
+  PrivateSubnet1CIDR: 172.29.96.0/20
+  PrivateSubnet2CIDR: 172.29.112.0/20
+  PrivateSubnet3CIDR: 172.29.128.0/20
+  PrivateSubnet4CIDR: 172.29.144.0/20
+  PrivateSubnet5CIDR: 172.29.160.0/20
+  PrivateSubnet6CIDR: 172.29.176.0/20
+tags: {}

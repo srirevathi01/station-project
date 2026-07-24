@@ -1,0 +1,20 @@
+template-file-path: templates/Pipeline.yaml
+parameters:
+  Environment: dev
+  ProjectName: station
+  ServiceKey: django
+  GitHubOwner: Madhumitha061104
+  GitHubRepo: station-django
+  GitHubBranch: main
+  CodeStarConnectionArn: ""
+  ArtifactsBucketName: ""
+  CodeBuildServiceRoleArn: ""
+  CodePipelineServiceRoleArn: ""
+  CodeDeployServiceRoleArn: ""
+  ECSClusterName: ""
+  ECSServiceName: ""
+  BlueTargetGroupName: ""
+  GreenTargetGroupName: ""
+  ProdListenerArn: ""
+  TestListenerArn: ""
+tags: {}
